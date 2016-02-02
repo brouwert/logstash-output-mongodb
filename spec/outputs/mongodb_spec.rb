@@ -34,7 +34,7 @@ describe LogStash::Outputs::Mongodb do
       allow(Mongo::Client).to receive(:new).and_return(connection)
       allow(connection).to receive(:use).and_return(client)
       allow(client).to receive(:[]).and_return(collection)
-      allow(collection).to receive(:insert_one)
+      allow(collection).to receive(:update_one)
       subject.register
     end
 
