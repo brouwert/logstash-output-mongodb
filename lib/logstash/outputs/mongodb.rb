@@ -34,11 +34,26 @@ class LogStash::Outputs::Mongodb < LogStash::Outputs::Base
   # "_id" field in the event.
   config :generateId, :validate => :boolean, :default => false
 
+  # The hash provided here will be passed to mongo as a query, the first matching
+  # document will be updated with the given event. If no document has been 
+  # matched a new document will be inserted.
+  # The values of the hash can use `%{foo}` values to dynamically populate the 
+  # query.
+  config :upsert, :validate => :hash, :required => false
+
+  def check_config_validity
+    if @upsert and @generateId
+      raise LogStash::ConfigurationError, "You cannot enable both generateId and make use of upsert."
+    end
+  end
+
   public
   def register
     Mongo::Logger.logger = @logger
     conn = Mongo::Client.new(@uri)
     @db = conn.use(@database)
+
+    check_config_validity
   end # def register
 
   def receive(event)
@@ -51,10 +66,17 @@ class LogStash::Outputs::Mongodb < LogStash::Outputs::Base
         document["@timestamp"] = event["@timestamp"].to_json
       end
       if @generateId
-        document["_id"] = BSON::ObjectId.new(nil, event["@timestamp"])
+        document['_id'] = BSON::ObjectId.from_time(event["@timestamp"])
       end
-      @db[event.sprintf(@collection)].insert_one(document)
-    rescue => e
+      if not @upsert
+        @db[event.sprintf(@collection)].insert_one(document)
+      else
+        query = Hash[@upsert.map { |k,v| [k, event.sprintf(v)] }]
+        @db[event.sprintf(@collection)]\
+          .find(query)\
+          .update_one({ '$set' => document }, { :upsert => true })
+      end
+     rescue => e
       @logger.warn("Failed to send event to MongoDB", :event => event, :exception => e,
                    :backtrace => e.backtrace)
       if e.message =~ /^E11000/
